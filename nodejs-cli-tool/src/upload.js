@@ -46,6 +46,83 @@ async function uploadImageToTencentCloud(imagePath) {
     });
 }
 
+async function uploadImageToAliyunOSS(imagePath) {
+    const OSS = require('ali-oss');
+    const client = new OSS({
+        accessKeyId: process.env.ALIYUN_ACCESS_KEY_ID,
+        accessKeySecret: process.env.ALIYUN_ACCESS_KEY_SECRET,
+        bucket: process.env.ALIYUN_BUCKET_NAME,
+        region: process.env.ALIYUN_REGION,
+    });
+
+    const fileName = path.basename(imagePath);
+    try {
+    const result = await client.put(fileName, imagePath);
+        console.log(`Uploaded ${fileName} to AliyunOSS successfully`);
+        return { url: result.data.url };
+    } catch (error) {
+        console.error(`Error uploading ${fileName} to AliyunOSS:`, error);
+        throw error;
+    }
+    return result.url;
+}
+
+async function uploadImageToQiniu(imagePath) {
+    const qiniu = require('qiniu');
+    const mac = new qiniu.auth.digest.Mac(process.env.QINIU_ACCESS_KEY, process.env.QINIU_SECRET_KEY);
+    const config = new qiniu.conf.Config();
+    const formUploader = new qiniu.form_up.FormUploader(config);
+    const putExtra = new qiniu.form_up.PutExtra();
+    const bucket = process.env.QINIU_BUCKET_NAME;
+
+    const fileName = path.basename(imagePath);
+    return new Promise((resolve, reject) => {
+        formUploader.putFile(qiniu.getUploadToken(mac, { scope: bucket }), fileName, imagePath, putExtra, (respErr, respBody, respInfo) => {
+            if (respErr) {
+                console.error(`Error uploading image ${fileName}:`, respErr);
+                reject(respErr);
+            }
+            if (respInfo.statusCode == 200) {
+                resolve(`${process.env.QINIU_DOMAIN}/${fileName}`);
+            } else {
+                console.error(`Error uploading image ${fileName}:`, respBody);
+                reject(respBody);
+            }
+        });
+    });
+}
+
+async function uploadImageToAWSS3(imagePath) {
+    const s3 = require('aws-sdk/lib/s3');
+    const { AWSS3_BUCKET_NAME: bucket, AWSS3_REGION: region } = process.env;
+
+    const fileName = path.basename(imagePath);
+
+    // Initialize the S3 client
+    const s3Client = new s3.S3({
+        accessKeyId: process.env.AWSS3_ACCESS_KEY_ID,
+        accessKeySecret: process.env.AWSS3_SECRET_KEY,
+        region: region
+    });
+
+    // Upload the image to S3
+    return new Promise((resolve, reject) => {
+        s3Client.putObject({
+            Bucket: bucket,
+            Key: fileName,
+            Source: fs.createReadStream(imagePath),
+        }, (err, data) => {
+            if (err) {
+                console.error(`Error uploading ${fileName} to AWS S3:`, err);
+                reject(err);
+            } else {
+                resolve(`${data.Location}`);
+            }
+        });
+    });
+}
+    
+
 async function uploadImages(markdownContent, markdownFilePath) {
     const imagePaths = markdownContent.match(/!\[.*?\]\((.*?)\)/g).map(img => img.match(/\((.*?)\)/)[1]);
     const absoluteImagePaths = imagePaths.map(imagePath => path.resolve(path.dirname(markdownFilePath), imagePath));
